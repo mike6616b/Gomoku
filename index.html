@@ -1,0 +1,339 @@
+import React, { useState, useEffect, useCallback } from 'react';
+
+const BOARD_SIZE = 15;
+const EMPTY = 0;
+const PLAYER = 1;
+const AI = 2;
+const CELL_SIZE = 26;
+
+const GomokuGame = () => {
+  const [board, setBoard] = useState(() => 
+    Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(EMPTY))
+  );
+  const [currentPlayer, setCurrentPlayer] = useState(PLAYER);
+  const [gameOver, setGameOver] = useState(false);
+  const [winner, setWinner] = useState(null);
+  const [isAiThinking, setIsAiThinking] = useState(false);
+
+  // 檢查是否獲勝
+  const checkWin = useCallback((board, row, col, player) => {
+    const directions = [
+      [0, 1], [1, 0], [1, 1], [1, -1] // 水平、垂直、對角線
+    ];
+
+    for (let [dx, dy] of directions) {
+      let count = 1;
+      
+      // 正方向檢查
+      for (let i = 1; i < 5; i++) {
+        const newRow = row + dx * i;
+        const newCol = col + dy * i;
+        if (newRow >= 0 && newRow < BOARD_SIZE && newCol >= 0 && newCol < BOARD_SIZE && 
+            board[newRow][newCol] === player) {
+          count++;
+        } else {
+          break;
+        }
+      }
+      
+      // 反方向檢查
+      for (let i = 1; i < 5; i++) {
+        const newRow = row - dx * i;
+        const newCol = col - dy * i;
+        if (newRow >= 0 && newRow < BOARD_SIZE && newCol >= 0 && newCol < BOARD_SIZE && 
+            board[newRow][newCol] === player) {
+          count++;
+        } else {
+          break;
+        }
+      }
+      
+      if (count >= 5) return true;
+    }
+    return false;
+  }, []);
+
+  // 評估棋盤位置的分數
+  const evaluatePosition = useCallback((board, row, col, player) => {
+  const directions = [[0, 1], [1, 0], [1, 1], [1, -1]];
+  let score = 0;
+
+  for (let [dx, dy] of directions) {
+    let count = 1;
+    let block = 0;
+    let empty = 0;
+
+    // 正方向
+    for (let i = 1; i < 5; i++) {
+      const newRow = row + dx * i;
+      const newCol = col + dy * i;
+      if (newRow < 0 || newRow >= BOARD_SIZE || newCol < 0 || newCol >= BOARD_SIZE) {
+        block++;
+        break;
+      }
+      const value = board[newRow][newCol];
+      if (value === player) {
+        count++;
+      } else if (value === EMPTY) {
+        empty++;
+        break;
+      } else {
+        block++;
+        break;
+      }
+    }
+
+    // 反方向
+    for (let i = 1; i < 5; i++) {
+      const newRow = row - dx * i;
+      const newCol = col - dy * i;
+      if (newRow < 0 || newRow >= BOARD_SIZE || newCol < 0 || newCol >= BOARD_SIZE) {
+        block++;
+        break;
+      }
+      const value = board[newRow][newCol];
+      if (value === player) {
+        count++;
+      } else if (value === EMPTY) {
+        empty++;
+        break;
+      } else {
+        block++;
+        break;
+      }
+    }
+
+    // 根據 count + block 給分（加強活三、活四、雙活三）
+    if (count >= 5) score += 100000;
+    else if (count === 4 && block === 0) score += 10000; // 活四
+    else if (count === 4 && block === 1) score += 1000;  // 眠四
+    else if (count === 3 && block === 0) score += 500;   // 活三
+    else if (count === 3 && block === 1) score += 100;   // 眠三
+    else if (count === 2 && block === 0) score += 50;    // 活二
+    else if (count === 2 && block === 1) score += 10;    // 眠二
+  }
+
+  return score;
+}, []);
+
+  // AI 選擇最佳位置
+const getAiMove = useCallback((board) => {
+  let bestScore = -1;
+  let bestMove = null;
+
+  for (let row = 0; row < BOARD_SIZE; row++) {
+    for (let col = 0; col < BOARD_SIZE; col++) {
+      if (board[row][col] === EMPTY) {
+        // 檢查是否能立即贏
+        const tempBoard = board.map(row => [...row]);
+        tempBoard[row][col] = AI;
+        if (checkWin(tempBoard, row, col, AI)) {
+          return [row, col]; // 立即勝
+        }
+
+        // 檢查是否需立即擋住玩家
+        tempBoard[row][col] = PLAYER;
+        if (checkWin(tempBoard, row, col, PLAYER)) {
+          bestMove = [row, col]; // 立即防守（優先）
+          bestScore = 99999;
+          continue;
+        }
+
+        // 計算攻防評分
+        const attackScore = evaluatePosition(board, row, col, AI);
+        const defenseScore = evaluatePosition(board, row, col, PLAYER);
+        const totalScore = attackScore + defenseScore * 1.1;
+
+        if (totalScore > bestScore) {
+          bestScore = totalScore;
+          bestMove = [row, col];
+        }
+      }
+    }
+  }
+
+  return bestMove;
+}, [evaluatePosition, checkWin]);
+
+  // 處理玩家點擊
+  const handleCellClick = useCallback((row, col) => {
+    if (gameOver || board[row][col] !== EMPTY || currentPlayer !== PLAYER || isAiThinking) {
+      return;
+    }
+
+    const newBoard = board.map(row => [...row]);
+    newBoard[row][col] = PLAYER;
+    setBoard(newBoard);
+
+    if (checkWin(newBoard, row, col, PLAYER)) {
+      setWinner(PLAYER);
+      setGameOver(true);
+    } else {
+      setCurrentPlayer(AI);
+    }
+  }, [board, gameOver, currentPlayer, isAiThinking, checkWin]);
+
+  // AI 回合
+  useEffect(() => {
+    if (currentPlayer === AI && !gameOver) {
+      setIsAiThinking(true);
+      const timer = setTimeout(() => {
+        const aiMove = getAiMove(board);
+        if (aiMove) {
+          const [row, col] = aiMove;
+          const newBoard = board.map(row => [...row]);
+          newBoard[row][col] = AI;
+          setBoard(newBoard);
+
+          if (checkWin(newBoard, row, col, AI)) {
+            setWinner(AI);
+            setGameOver(true);
+          } else {
+            setCurrentPlayer(PLAYER);
+          }
+        }
+        setIsAiThinking(false);
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [currentPlayer, gameOver, board, getAiMove, checkWin]);
+
+  // 重新開始遊戲
+  const resetGame = () => {
+    setBoard(Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(EMPTY)));
+    setCurrentPlayer(PLAYER);
+    setGameOver(false);
+    setWinner(null);
+    setIsAiThinking(false);
+  };
+
+  return (
+    <div className="flex flex-col items-center p-4 bg-gradient-to-br from-amber-50 to-orange-100 min-h-screen">
+      <h1 className="text-4xl font-bold text-amber-800 mb-4">五子棋</h1>
+      
+      <div className="mb-4 text-center">
+        <div className="text-xl font-semibold text-amber-700 mb-2">
+          {gameOver ? (
+            winner === PLAYER ? '🎉 你贏了！' : '🤖 電腦贏了！'
+          ) : isAiThinking ? (
+            '🤖 電腦思考中...'
+          ) : (
+            currentPlayer === PLAYER ? '🔵 你的回合' : '🔴 電腦的回合'
+          )}
+        </div>
+        
+        <button
+          onClick={resetGame}
+          className="px-6 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors"
+        >
+          重新開始
+        </button>
+      </div>
+
+      <div className="relative">
+        <div 
+          className="inline-block p-4 rounded-lg shadow-xl border-4 border-amber-900"
+          style={{
+            backgroundColor: '#EFDECD'
+          }}
+        >
+          <div 
+            className="relative bg-yellow-100 bg-opacity-20"
+            style={{ 
+              width: `${(BOARD_SIZE - 1) * CELL_SIZE + 20}px`, 
+              height: `${(BOARD_SIZE - 1) * CELL_SIZE + 20}px`,
+              padding: '10px'
+            }}
+          >
+            {/* 棋盤格線 */}
+            <svg 
+              width={(BOARD_SIZE - 1) * CELL_SIZE} 
+              height={(BOARD_SIZE - 1) * CELL_SIZE}
+              className="absolute top-2.5 left-2.5"
+              style={{ pointerEvents: 'none' }}
+            >
+              {/* 垂直線 */}
+              {Array.from({ length: 15 }, (_, i) => (
+                <line
+                  key={`v-${i}`}
+                  x1={i * CELL_SIZE}
+                  y1={0}
+                  x2={i * CELL_SIZE}
+                  y2={(BOARD_SIZE - 1) * CELL_SIZE}
+                  stroke="#654321"
+                  strokeWidth="1"
+                />
+              ))}
+              {/* 水平線 */}
+              {Array.from({ length: 15 }, (_, i) => (
+                <line
+                  key={`h-${i}`}
+                  x1={0}
+                  y1={i * CELL_SIZE}
+                  x2={(BOARD_SIZE - 1) * CELL_SIZE}
+                  y2={i * CELL_SIZE}
+                  stroke="#654321"
+                  strokeWidth="1"
+                />
+              ))}
+              {/* 天元點 */}
+              <circle cx={7 * CELL_SIZE} cy={7 * CELL_SIZE} r="2" fill="#654321" />
+              {/* 星位點 */}
+              <circle cx={3 * CELL_SIZE} cy={3 * CELL_SIZE} r="1.5" fill="#654321" />
+              <circle cx={11 * CELL_SIZE} cy={3 * CELL_SIZE} r="1.5" fill="#654321" />
+              <circle cx={3 * CELL_SIZE} cy={11 * CELL_SIZE} r="1.5" fill="#654321" />
+              <circle cx={11 * CELL_SIZE} cy={11 * CELL_SIZE} r="1.5" fill="#654321" />
+            </svg>
+            
+            {/* 點擊區域和棋子 */}
+            {board.map((row, rowIndex) =>
+              row.map((cell, colIndex) => (
+                <div
+                  key={`${rowIndex}-${colIndex}`}
+                  className="absolute w-6 h-6 flex items-center justify-center cursor-pointer hover:bg-yellow-300 hover:bg-opacity-40 transition-colors rounded-full"
+                  onClick={() => handleCellClick(rowIndex, colIndex)}
+                  style={{
+                    left: `${colIndex * CELL_SIZE + 10 - 12}px`,
+                    top: `${rowIndex * CELL_SIZE + 10 - 12}px`
+                  }}
+                >
+                  {cell === PLAYER && (
+                    <div 
+                      className="w-5 h-5 rounded-full shadow-lg transform hover:scale-110 transition-transform"
+                      style={{
+                        background: 'radial-gradient(circle at 35% 35%, #333, #000)',
+                        border: '1px solid #222'
+                      }}
+                    ></div>
+                  )}
+                  {cell === AI && (
+                    <div 
+                      className="w-5 h-5 rounded-full shadow-lg transform hover:scale-110 transition-transform"
+                      style={{
+                        background: 'radial-gradient(circle at 35% 35%, #fff, #ddd)',
+                        border: '1px solid #bbb'
+                      }}
+                    ></div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 text-center text-amber-700">
+        <p className="text-sm">
+          🔵 你是黑子 | 🔴 電腦是白子
+        </p>
+        <p className="text-sm mt-1">
+          先連成五子者獲勝！
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default GomokuGame;
+    
